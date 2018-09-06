@@ -1,5 +1,5 @@
   TITLE "Source for CANCOND"
-; file name CANCOND_v2j.asm 05/11/13
+; file name CANCOND_v2m.asm 15/03/15
 
 ; Based on CANLED64 v2g
 
@@ -17,6 +17,9 @@
 
 ;Rev 2j 05/11/13 All now appears to be working
 ;Rev 2k 25/11/13 Clear shortevs when all events deleted
+; No version 2l
+;Rev 2m 15/03/15 call chkmtrx after deleting an event
+;Rev 2m Beta 2 05/11/15 Fix UNLRN bug, clear learn mode
 
 ; This is the bootloader section
 
@@ -179,13 +182,14 @@ Modstat equ 1   ;address in EEPROM
 
 MAN_NO      equ MANU_MERG    ;manufacturer number
 MAJOR_VER   equ .2
-MINOR_VER   equ "K"
+MINOR_VER   equ "M"
 MODULE_ID   equ MTYP_CANCOND8C ; id to identify this type of module
 EVT_NUM     equ EN_NUM           ; Number of events
 EVperEVT    equ EV_NUM           ; Event variables per event
 NV_NUM      equ 8          ; Number of node variables
 NODEFLGS    equ PF_COMBI + PF_BOOT
 CPU_TYPE    equ P18F2480
+BETA    equ 2
 
 
 ; set config registers
@@ -1073,6 +1077,7 @@ nodeprm     db  MAN_NO, MINOR_VER, MODULE_ID, EVT_NUM, EVperEVT, NV_NUM
       db  MAJOR_VER,NODEFLGS,CPU_TYPE,PB_CAN    ; Main parameters
             dw  RESET_VECT     ; Load address for module code above bootloader
             dw  0           ; Top 2 bytes of 32 bit address not used
+            db  0,0,0,0,CPUM_MICROCHIP,BETA
 sparprm     fill 0,prmcnt-$ ; Unused parameter space set to zero
 
 PRMCOUNT    equ sparprm-nodeprm ; Number of parameter bytes implemented
@@ -1084,7 +1089,7 @@ nodenam     dw  myName      ; Pointer to module type name
             dw  0 ; Top 2 bytes of 32 bit address not used
 
 
-PRCKSUM     equ MAN_NO+MINOR_VER+MODULE_ID+EVT_NUM+EVperEVT+NV_NUM+MAJOR_VER+NODEFLGS+CPU_TYPE+PB_CAN+HIGH myName+LOW myName+HIGH loadadr+LOW loadadr+PRMCOUNT
+PRCKSUM     equ MAN_NO+MINOR_VER+MODULE_ID+EVT_NUM+EVperEVT+NV_NUM+MAJOR_VER+NODEFLGS+CPU_TYPE+PB_CAN+HIGH myName+LOW myName+HIGH loadadr+LOW loadadr+PRMCOUNT+CPUM_MICROCHIP+BETA
 
 cksum       dw  PRCKSUM     ; Checksum of parameters
   
@@ -1702,6 +1707,7 @@ setlrn              ; 0x53 set learn mode
     sublw 0
     bnz   notNN
     bsf   Datmode,4
+;   clrf  MtrxChk
     bsf   LED_PORT,LED1 ;LED on
     bra   main2
 
@@ -1709,6 +1715,9 @@ notlrn              ; 0x54 clear learn mode
     call  thisNN
     sublw 0
     bnz   notNN
+    tstfsz  MtrxChk
+;   call  chkmtrx
+    nop
     bcf   Datmode,4   ; clear learn flag
     bra   main2
     
@@ -1786,9 +1795,6 @@ donxt
     decfsz  Count
     bra   nxtcond
     call  chkmtrx
-#ifdef TESTING
-    return
-#endif
     bra   main2
     
 offcmnd 
@@ -1830,6 +1836,7 @@ nochng
     rlncf MtrxRoll
     decfsz  Count
     bra   nxtchk
+;   clrf  MtrxChk
     return    
 sendev
     movwf Tx1d0
@@ -1880,6 +1887,7 @@ lrnend
       
 do_unlearn
     call  unlearn
+    call  chkmtrx     ; Rev v2m
     movlw 0x59      ; send WRACK
     call  nnrel
     bra   main2
@@ -2418,15 +2426,24 @@ remove      ; remove all conditions for event from Matrix and EEPROM
   movwf Count3
   movlw LOW condctrl
   movwf EEADR
+  clrf  MtrxChk
+  movlw 1
+  movwf MtrxRoll
 nxtrem
   movff POSTINC0,Temp   ; get EV data
-  comf  Temp
-  movf  Temp,w
-  andwf POSTINC2      ; remove from matrix
+  comf  Temp,w
+  andwf POSTINC2      ; update matrix, no change if EV data is zero
+  movf  Temp, w
+  sublw 0
+  bz    nxtrem1       ; j if no condition slot set
+  movf  MtrxRoll, w
+  iorwf MtrxChk
   call  eeread
   andwf Temp,w
   call  eewrite
+nxtrem1
   incf  EEADR
+  rlncf MtrxRoll
   decf  Count3
   bnz   nxtrem
   return
@@ -3537,6 +3554,36 @@ idread
 ;   call  sendTX
     
     return
+
+
+;***********************************************************
+;
+;getDevId returnd DEVID2 and DEVID1 in PRODH and PRODL
+
+getId1
+  call  getProdId
+  movf  PRODL,w
+  return
+  
+getId2
+  call  getProdId
+  movf  PRODH,w
+  return
+
+getProdId
+
+  movlw 0x3F
+  movwf TBLPTRU
+  movlw 0xFF
+  movwf TBLPTRH
+  movlw 0xFE
+  movwf TBLPTRL
+  bsf   EECON1, EEPGD
+  tblrd*+
+  movff TABLAT, PRODL
+  tblrd*
+  movff TABLAT, PRODH
+  return    
     
 ;***********************************************************
 
