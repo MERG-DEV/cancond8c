@@ -1,5 +1,5 @@
   TITLE "Source for CANCOND"
-; file name CANCOND_v2m.asm 15/03/15
+; file name CANCOND_v2mBeta3.asm  19/03/16
 
 ; Based on CANLED64 v2g
 
@@ -20,6 +20,8 @@
 ; No version 2l
 ;Rev 2m 15/03/15 call chkmtrx after deleting an event
 ;Rev 2m Beta 2 05/11/15 Fix UNLRN bug, clear learn mode
+;Rev 2m Beta 3 19/03/16 Check for Off conditions before On
+;Rev 2n 24/04/16 2mBeta3 works OK
 
 ; This is the bootloader section
 
@@ -182,14 +184,14 @@ Modstat equ 1   ;address in EEPROM
 
 MAN_NO      equ MANU_MERG    ;manufacturer number
 MAJOR_VER   equ .2
-MINOR_VER   equ "M"
+MINOR_VER   equ "N"
 MODULE_ID   equ MTYP_CANCOND8C ; id to identify this type of module
 EVT_NUM     equ EN_NUM           ; Number of events
 EVperEVT    equ EV_NUM           ; Event variables per event
 NV_NUM      equ 8          ; Number of node variables
 NODEFLGS    equ PF_COMBI + PF_BOOT
 CPU_TYPE    equ P18F2480
-BETA    equ 2
+BETA    equ 0
 
 
 ; set config registers
@@ -1803,41 +1805,63 @@ offcmnd
     andwf INDF2     ; turn off POL bits in matrix
     andwf POSTINC0,w    ; remove POL bits from data
     iorwf POSTINC2    ; and 'or' into matrix
-    bra   donxt   
+    bra   donxt 
+  
 chkmtrx
     lfsr  FSR2,Matrix
     movlw 8
     movwf Count
     movlw 1
     movwf MtrxRoll
-nxtchk
+
+; Check for Off conditions
+
+nxtchkoff
     tstfsz  POSTINC2
     bra   nowoff
-    ;here if matrix has ON condition i.e. == zero
-    movf  MtrxChk,w
-    andwf MtrxRoll, w
-    bz    nochng
-    ;matrix has just become zero
-    movf  MtrxRoll,w
-    iorwf PORTC ;turn on output
-    movlw CMD_ON
-    call  sendev
-    bra   nochng    
+    bra   nochngoff
 nowoff
     movf  MtrxChk,w
     andwf MtrxRoll,w
-    bnz   nochng
+    bnz   nochngoff
     movf  MtrxRoll,w
     comf  WREG
     andwf PORTC ;turn off output
     movlw CMD_OFF
     call  sendev
-nochng
+nochngoff
     rlncf MtrxRoll
     decfsz  Count
-    bra   nxtchk
-;   clrf  MtrxChk
-    return    
+    bra   nxtchkoff
+
+; finishe testing for Off conditions
+; Now test for ON conditions
+
+    lfsr  FSR2,Matrix
+    movlw 8
+    movwf Count
+    movlw 1
+    movwf MtrxRoll
+
+nxtchkon
+    tstfsz  POSTINC2
+    bra   nochngon
+    ;here if matrix has ON condition i.e. == zero
+    movf  MtrxChk,w
+    andwf MtrxRoll, w
+    bz    nochngon
+    ;matrix has just become zero
+    movf  MtrxRoll,w
+    iorwf PORTC ;turn on output
+    movlw CMD_ON
+    call  sendev
+
+nochngon
+    rlncf MtrxRoll
+    decfsz  Count
+    bra   nxtchkon
+    return
+
 sendev
     movwf Tx1d0
     clrf  Tx1d3
